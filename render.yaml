@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: distributor-location-app
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
