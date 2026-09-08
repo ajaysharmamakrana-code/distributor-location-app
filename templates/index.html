@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Distributor Location Capture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f6f8; }
+    .wrap { max-width: 520px; margin: 0 auto; padding: 18px; }
+    .card { background: white; border-radius: 14px; padding: 18px; box-shadow: 0 4px 18px rgba(0,0,0,.08); }
+    h2 { margin-top: 0; }
+    label { display:block; margin-top:14px; font-weight:700; }
+    select, input, button { width:100%; padding:12px; margin-top:7px; border-radius:10px; border:1px solid #ccd2d8; font-size:16px; }
+    button { border:0; font-weight:700; cursor:pointer; }
+    #gpsBtn { background:#e9eef5; }
+    #submitBtn { background:#111827; color:white; }
+    #submitBtn:disabled { opacity:.45; cursor:not-allowed; }
+    .meta { padding:10px 12px; background:#f7f8fa; border-radius:10px; margin-top:10px; line-height:1.5; }
+    .ok { color:green; font-weight:700; }
+    .bad { color:#b91c1c; font-weight:700; }
+    .status { margin-top:14px; }
+    .completed { color:green; }
+    .pending { color:#555; }
+    a.report { display:block; text-align:center; margin-top:14px; text-decoration:none; font-weight:700; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h2>Distributor Location Capture</h2>
+
+    <label>1. Select SO</label>
+    <select id="so">
+      <option value="">Select SO</option>
+      {% for so in sos %}
+      <option value="{{ so }}">{{ so }}</option>
+      {% endfor %}
+    </select>
+
+    <label>2. Select Distributor</label>
+    <select id="dist" disabled>
+      <option value="">Select Distributor</option>
+    </select>
+
+    <div class="meta">
+      <div><b>ERP ID:</b> <span id="erp">-</span></div>
+      <div><b>City:</b> <span id="city">-</span></div>
+      <div><b>Status:</b> <span id="distStatus">-</span></div>
+    </div>
+
+    <label>3. Take Photo</label>
+    <input id="photo" type="file" accept="image/*" capture="environment">
+
+    <label>4. Capture GPS</label>
+    <button id="gpsBtn" type="button">📍 Get Current Location</button>
+    <div class="meta">
+      <div><b>Latitude:</b> <span id="lat">-</span></div>
+      <div><b>Longitude:</b> <span id="lon">-</span></div>
+      <div><b>Accuracy:</b> <span id="acc">-</span></div>
+    </div>
+
+    <button id="submitBtn" disabled>Submit</button>
+    <div id="msg" class="status"></div>
+
+    <a class="report" href="/report">Download Excel Report</a>
+  </div>
+</div>
+
+<script>
+const so = document.getElementById('so');
+const dist = document.getElementById('dist');
+const erp = document.getElementById('erp');
+const city = document.getElementById('city');
+const distStatus = document.getElementById('distStatus');
+const photo = document.getElementById('photo');
+const gpsBtn = document.getElementById('gpsBtn');
+const submitBtn = document.getElementById('submitBtn');
+const msg = document.getElementById('msg');
+
+let distributors = [];
+let gps = {lat:null, lon:null, acc:null};
+let selected = null;
+
+function refreshSubmit() {
+  submitBtn.disabled = !(so.value && selected && !selected.completed && photo.files.length && gps.lat !== null && gps.lon !== null);
+}
+
+so.addEventListener('change', async () => {
+  selected = null;
+  gps = {lat:null, lon:null, acc:null};
+  document.getElementById('lat').textContent = '-';
+  document.getElementById('lon').textContent = '-';
+  document.getElementById('acc').textContent = '-';
+  erp.textContent = city.textContent = distStatus.textContent = '-';
+  dist.innerHTML = '<option value="">Select Distributor</option>';
+  dist.disabled = true;
+  if (!so.value) { refreshSubmit(); return; }
+
+  const res = await fetch('/api/distributors?so=' + encodeURIComponent(so.value));
+  distributors = await res.json();
+  distributors.forEach((d, i) => {
+    const opt = document.createElement('option');
+    opt.value = i;
+    opt.textContent = d.name + (d.completed ? ' ✅ Completed' : '');
+    dist.appendChild(opt);
+  });
+  dist.disabled = false;
+  refreshSubmit();
+});
+
+dist.addEventListener('change', () => {
+  selected = dist.value === '' ? null : distributors[Number(dist.value)];
+  if (!selected) {
+    erp.textContent = city.textContent = distStatus.textContent = '-';
+  } else {
+    erp.textContent = selected.erp;
+    city.textContent = selected.city || '-';
+    distStatus.innerHTML = selected.completed ? '<span class="completed">✅ Completed</span>' : '<span class="pending">Pending</span>';
+  }
+  refreshSubmit();
+});
+
+photo.addEventListener('change', refreshSubmit);
+
+gpsBtn.addEventListener('click', () => {
+  msg.textContent = '';
+  if (!navigator.geolocation) {
+    msg.innerHTML = '<span class="bad">GPS is not supported on this browser.</span>';
+    return;
+  }
+  gpsBtn.disabled = true;
+  gpsBtn.textContent = 'Getting location...';
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      gps = {
+        lat: pos.coords.latitude,
+        lon: pos.coords.longitude,
+        acc: pos.coords.accuracy
+      };
+      document.getElementById('lat').textContent = gps.lat.toFixed(6);
+      document.getElementById('lon').textContent = gps.lon.toFixed(6);
+      document.getElementById('acc').textContent = Math.round(gps.acc) + ' m';
+      gpsBtn.disabled = false;
+      gpsBtn.textContent = '📍 Refresh Current Location';
+      refreshSubmit();
+    },
+    err => {
+      gpsBtn.disabled = false;
+      gpsBtn.textContent = '📍 Get Current Location';
+      msg.innerHTML = '<span class="bad">GPS permission/location failed. Please allow Location and try again.</span>';
+      refreshSubmit();
+    },
+    { enableHighAccuracy:true, timeout:20000, maximumAge:0 }
+  );
+});
+
+submitBtn.addEventListener('click', async () => {
+  msg.textContent = '';
+  const fd = new FormData();
+  fd.append('so', so.value);
+  fd.append('distributor_name', selected.name);
+  fd.append('erp', selected.erp);
+  fd.append('city', selected.city);
+  fd.append('latitude', gps.lat);
+  fd.append('longitude', gps.lon);
+  fd.append('accuracy', gps.acc ?? '');
+  fd.append('photo', photo.files[0]);
+
+  submitBtn.disabled = true;
+  submitBtn.textContent = 'Submitting...';
+
+  const res = await fetch('/api/submit', { method:'POST', body:fd });
+  const data = await res.json();
+
+  if (res.ok && data.ok) {
+    msg.innerHTML = '<span class="ok">✅ ' + data.message + '</span>';
+    selected.completed = true;
+    dist.options[dist.selectedIndex].textContent = selected.name + ' ✅ Completed';
+    distStatus.innerHTML = '<span class="completed">✅ Completed</span>';
+    photo.value = '';
+  } else {
+    msg.innerHTML = '<span class="bad">❌ ' + (data.message || 'Submission failed') + '</span>';
+  }
+  submitBtn.textContent = 'Submit';
+  refreshSubmit();
+});
+</script>
+</body>
+</html>
